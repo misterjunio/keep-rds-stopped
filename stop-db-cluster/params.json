@@ -1,0 +1,8 @@
+[
+    "pEnvironmentName=DEV",
+    "pRdsDbClusterName=db-cluster-name",
+    "pRdsDbClusterArn=arn:aws:rds:[region]:[account-id]:cluster:[db-cluster-name]",
+    "pPollingRate=3 hours",
+    "pSecurityGroupIds=sg-XXXXXXXX",
+    "pPrivateSubnetIds=subnet-XXXXXXXX,subnet-XXXXXXXX,subnet-XXXXXXXX"
+]

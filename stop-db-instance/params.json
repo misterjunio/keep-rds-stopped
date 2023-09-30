@@ -1,0 +1,8 @@
+[
+    "pEnvironmentName=DEV",
+    "pRdsDbInstanceId=db-instance-id",
+    "pRdsDbInstanceArn=arn:aws:rds:[region]:[account-id]:db:[db-instance-id]",
+    "pPollingRate=3 hours",
+    "pSecurityGroupIds=sg-XXXXXXXX",
+    "pPrivateSubnetIds=subnet-XXXXXXXX,subnet-XXXXXXXX,subnet-XXXXXXXX"
+]

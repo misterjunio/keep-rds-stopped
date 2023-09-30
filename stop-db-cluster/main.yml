@@ -1,0 +1,112 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: Solution to keep an RDS DB cluster stopped
+
+Parameters:
+  pEnvironmentName:
+    Default: DEV
+    Description: Name of the environment, for resource naming
+    Type: String
+  pRdsDbClusterName:
+    Description: Name of the DB cluster to keep stopped
+    Type: String
+  pRdsDbClusterArn:
+    Description: ARN of the DB cluster to keep stopped
+    Type: String
+  pPollingRate:
+    Description: Rate at which to invoke the DB cluster stopping function e.g. 2 hours, 1 day, etc.
+    Type: String
+    Default: 3 hours
+  pSecurityGroupIds:
+    Description: Comma-separated list of security groups IDs for the Lambda function (should allow it to connect to the DB cluster)
+    Type: List<AWS::EC2::SecurityGroup::Id>
+  pPrivateSubnetIds:
+    Description: Comma-separated list of subnet IDs for the Lambda function (should be the same VPC private subnet as the DB cluster)
+    Type: List<AWS::EC2::Subnet::Id>
+
+Resources:
+  # Lambda function that checks the status of an RDS DB cluster, and stops it if it's not already stopped
+  rStopRdsDbClusterFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${pEnvironmentName}-Stop-RDS-DB-Cluster-Function
+      Runtime: nodejs18.x
+      Role: !GetAtt rStopRdsDbClusterRole.Arn
+      Handler: index.handler
+      Code:
+        ZipFile: |
+          const { RDSClient, DescribeDBClustersCommand, StopDBClusterCommand } = require('@aws-sdk/client-rds');
+
+          const rdsClient = new RDSClient();
+
+          const clusterInput = {
+            DBClusterIdentifier: process.env.DB_CLUSTER_NAME,
+          }
+
+          exports.handler = async function(event) {
+            const describeClustersCommand = new DescribeDBClustersCommand(clusterInput);
+            const describeClustersResponse = await rdsClient.send(describeClustersCommand);
+            
+            if (describeClustersResponse.DBClusters[0].Status == 'stopped') {
+              console.log('Cluster is already stopped, leaving it alone');
+            }
+            else {
+              console.log('Cluster is not stopped, stopping');
+              const stopClusterCommand = new StopDBClusterCommand(clusterInput);
+              await rdsClient.send(stopClusterCommand);
+            }
+            
+            return 'All done';
+          };
+      Timeout: 30
+      Environment:
+        Variables:
+          DB_CLUSTER_NAME: !Ref pRdsDbClusterName
+      VpcConfig:
+        SecurityGroupIds: !Ref pSecurityGroupIds
+        SubnetIds: !Ref pPrivateSubnetIds
+
+  # Lambda function role
+  rStopRdsDbClusterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${pEnvironmentName}-Stop-RDS-DB-Cluster-Role
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: DescribeAndStopRdsDbCluster
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Action:
+                  - rds:DescribeDBClusters
+                  - rds:StopDBCluster
+                Effect: Allow
+                Resource: !Ref pRdsDbClusterArn
+
+  # Event rule to trigger the Lambda function to stop the RDS DB cluster
+  rStopRdsDbClusterEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Trigger Lambda to check RDS DB cluster status, and stop it if it's running
+      ScheduleExpression: !Sub rate(${pPollingRate})
+      Targets:
+        - Arn: !GetAtt rStopRdsDbClusterFunction.Arn
+          Id: StopRdsDbClusterLambda
+
+  # Permission for the event rule to invoke the Lambda function
+  rFunctionInvocationPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref rStopRdsDbClusterFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt rStopRdsDbClusterEventRule.Arn
